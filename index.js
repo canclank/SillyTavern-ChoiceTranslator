@@ -56,8 +56,10 @@ const ctx = () => SillyTavern.getContext();
 /* 설정                                                                */
 /* ------------------------------------------------------------------ */
 
+let settingsRef = null;
 function settings() {
     const { extensionSettings } = ctx();
+    if (settingsRef && extensionSettings[MODULE] === settingsRef) return settingsRef;
     if (!extensionSettings[MODULE]) {
         extensionSettings[MODULE] = structuredClone(defaultSettings);
     }
@@ -73,6 +75,7 @@ function settings() {
     for (const key of Object.keys(defaultSettings)) {
         if (!Object.hasOwn(s, key)) s[key] = defaultSettings[key];
     }
+    settingsRef = s;
     return s;
 }
 
@@ -108,9 +111,19 @@ function errMsg(err) {
 }
 
 /** 태그 안에 HTML이 섞여 있으면 줄바꿈을 살려 일반 텍스트로 변환 */
+const htmlTextCache = new Map();
 function htmlToText(str) {
     const src = String(str ?? '');
     if (!/<[a-z!/][^>]*>/i.test(src)) return src.trim();
+    const hit = htmlTextCache.get(src);
+    if (hit !== undefined) return hit;
+    const text = parseHtmlText(src);
+    htmlTextCache.set(src, text);
+    if (htmlTextCache.size > 300) htmlTextCache.delete(htmlTextCache.keys().next().value);
+    return text;
+}
+
+function parseHtmlText(src) {
     const withBreaks = src
         .replace(/<br\s*\/?>/gi, '\n')
         .replace(/<li[^>]*>/gi, '• ')
@@ -256,10 +269,18 @@ function parseTargets() {
     if (parsedTargets.src !== src) {
         parsedTargets = {
             src,
-            list: src.split(/[\n,]/).map(x => x.trim()).filter(Boolean),
+            // "<choices>", "</choices>" 처럼 꺾쇠를 붙여 적어도 이름만 남김
+            list: src.split(/[\n,]/)
+                .map(x => x.trim().replace(/^<\/?\s*/, '').replace(/\s*\/?>$/, '').trim())
+                .filter(Boolean),
         };
     }
     return parsedTargets.list;
+}
+
+/** 태그 이름인지(CSS 선택자가 아닌지). 한글 등 모든 문자를 허용하고 선택자 기호만 걸러냄 */
+function isTagName(entry) {
+    return !/[\s.#[\]()>+~*=^$|"'`,]/.test(entry);
 }
 
 // 메시지 객체 → { raw, src, tagItems, missing } : 원문과 대상 목록이 같으면 재사용
@@ -274,18 +295,35 @@ function extractRawTargets(msg, entries) {
     const tagItems = [];
     const missing = []; // 원문에서 못 찾은 항목 → 화면(DOM)에서 찾아봄
     for (const entry of entries) {
-        if (!/^[\w:-]+$/.test(entry)) {
+        if (!isTagName(entry)) {
             missing.push(entry);
             continue;
         }
         const tag = escapeRegex(entry);
-        const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}\\s*>`, 'gi');
+        // < choices > 처럼 꺾쇠 안쪽에 공백이 있어도 인식
+        const open = `<\\s*${tag}(?:\\s[^>]*)?>`;
+        const close = `<\\/\\s*${tag}\\s*>`;
+        const re = new RegExp(`${open}([\\s\\S]*?)${close}`, 'gi');
         let found = false;
         for (const m of raw.matchAll(re)) {
             const text = htmlToText(m[1]);
             if (text) {
                 tagItems.push({ label: `<${entry}>`, source: text });
                 found = true;
+            }
+        }
+        // 닫는 태그가 없는 경우(응답이 중간에 잘렸거나 모델이 빠뜨림): 여는 태그부터 메시지 끝까지
+        if (!found) {
+            const openMatch = new RegExp(open, 'i').exec(raw);
+            if (openMatch) {
+                const rest = raw.slice(openMatch.index + openMatch[0].length);
+                if (!new RegExp(close, 'i').test(rest)) {
+                    const text = htmlToText(rest);
+                    if (text) {
+                        tagItems.push({ label: `<${entry}>`, source: text });
+                        found = true;
+                    }
+                }
             }
         }
         // 원문에 여는 태그조차 없으면 화면에도 없음 → DOM 검색 생략
@@ -597,9 +635,8 @@ function createFloatingUI() {
     let scrollTimer = null;
     document.getElementById('chat')?.addEventListener('scroll', () => {
         if (!fab.hidden && !isTouchDevice()) hideFab();
-        if (scrollTimer) return;
+        clearTimeout(scrollTimer);
         scrollTimer = setTimeout(() => {
-            scrollTimer = null;
             if (fabState && !isTouchDevice()) queueSelectionCheck();
             if (dock && !dock.hidden && settings().dockTranslate) scheduleDockUpdate();
         }, 200);
@@ -607,6 +644,11 @@ function createFloatingUI() {
 }
 
 function queueSelectionCheck() {
+    const s = settings();
+    if (!s.enabled || !s.selectionEnabled) {
+        if (fab && !fab.hidden) hideFab();
+        return;
+    }
     clearTimeout(selTimer);
     selTimer = setTimeout(onSelectionChange, 250);
 }
