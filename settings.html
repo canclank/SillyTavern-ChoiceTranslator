@@ -1,0 +1,130 @@
+<div id="sttr_settings" class="sttr-settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>선택지 번역기</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+            <label class="checkbox_label" for="sttr_enabled">
+                <input type="checkbox" id="sttr_enabled" />
+                <span>확장 사용</span>
+            </label>
+
+            <h4>번역 모델</h4>
+            <label for="sttr_profile">연결 프로필</label>
+            <div class="flex-container sttr-conn-row">
+                <select id="sttr_profile" class="text_pole"></select>
+                <div id="sttr_conn_test" class="menu_button menu_button_icon" title="선택한 프로필로 짧은 요청을 보내 연결을 확인합니다">
+                    <i class="fa-solid fa-plug-circle-check"></i>
+                    <span>연결 테스트</span>
+                </div>
+            </div>
+            <small id="sttr_conn_result" class="sttr-conn-result"></small>
+            <small id="sttr_profile_hint" class="sttr-hint"></small>
+
+            <div class="flex-container">
+                <div class="flex1">
+                    <label for="sttr_language">목표 언어</label>
+                    <input id="sttr_language" class="text_pole" type="text" placeholder="한국어" />
+                </div>
+                <div class="flex1">
+                    <label for="sttr_max_tokens">최대 응답 토큰</label>
+                    <input id="sttr_max_tokens" class="text_pole" type="number" min="16" step="16" />
+                </div>
+            </div>
+
+            <h4>프롬프트</h4>
+            <small class="sttr-hint">
+                &#123;&#123;text&#125;&#125; 자리에 원문이, &#123;&#123;language&#125;&#125; 자리에 목표 언어가 들어갑니다.
+                &#123;&#123;char&#125;&#125;, &#123;&#123;user&#125;&#125; 같은 실리태번 매크로도 쓸 수 있어요.
+            </small>
+            <label for="sttr_system_prompt">시스템 프롬프트</label>
+            <textarea id="sttr_system_prompt" class="text_pole textarea_compact" rows="6"></textarea>
+            <label for="sttr_prompt">번역 프롬프트</label>
+            <textarea id="sttr_prompt" class="text_pole textarea_compact" rows="3"></textarea>
+            <div class="flex-container">
+                <div id="sttr_reset_prompts" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-rotate-left"></i>
+                    <span>기본 프롬프트로 되돌리기</span>
+                </div>
+                <div id="sttr_test" class="menu_button menu_button_icon" title="지금 프롬프트로 예문을 번역해 봅니다">
+                    <i class="fa-solid fa-vial"></i>
+                    <span>번역 테스트</span>
+                </div>
+            </div>
+
+            <h4>선택지 번역</h4>
+            <label for="sttr_tags">번역할 태그</label>
+            <textarea id="sttr_tags" class="text_pole textarea_compact" rows="3" placeholder="choices&#10;options"></textarea>
+            <small class="sttr-hint">
+                한 줄에 하나씩 (쉼표로 구분해도 됩니다). 원본 메시지에서 &lt;태그&gt;…&lt;/태그&gt; 안의 내용만 꺼내
+                번역해 팝업으로 보여줍니다. 메시지 화면은 바꾸지 않아요.
+            </small>
+            <label class="checkbox_label" for="sttr_show_button">
+                <input type="checkbox" id="sttr_show_button" />
+                <span>태그가 있는 메시지에 번역 버튼 표시</span>
+            </label>
+            <label class="checkbox_label" for="sttr_show_wand">
+                <input type="checkbox" id="sttr_show_wand" />
+                <span>마법봉 메뉴에 "선택지 번역" 표시</span>
+            </label>
+            <label for="sttr_auto_mode">새 AI 메시지가 오면</label>
+            <select id="sttr_auto_mode" class="text_pole">
+                <option value="off">아무것도 하지 않기</option>
+                <option value="prefetch">미리 번역해 두기 (버튼을 누르면 바로 표시)</option>
+                <option value="popup">번역해서 팝업 바로 띄우기</option>
+            </select>
+
+            <h4>드래그 번역</h4>
+            <label class="checkbox_label" for="sttr_selection_enabled">
+                <input type="checkbox" id="sttr_selection_enabled" />
+                <span>텍스트를 드래그하면 번역 버튼 표시</span>
+            </label>
+            <label class="checkbox_label" for="sttr_selection_chat_only">
+                <input type="checkbox" id="sttr_selection_chat_only" />
+                <span>채팅 영역에서만</span>
+            </label>
+
+            <h4>플로팅 버튼</h4>
+            <label class="checkbox_label" for="sttr_dock_enabled">
+                <input type="checkbox" id="sttr_dock_enabled" />
+                <span>화면에 플로팅 버튼 띄우기</span>
+            </label>
+            <label class="checkbox_label" for="sttr_dock_translate">
+                <input type="checkbox" id="sttr_dock_translate" />
+                <span>선택지 번역 버튼</span>
+            </label>
+            <label class="checkbox_label" for="sttr_dock_nav">
+                <input type="checkbox" id="sttr_dock_nav" />
+                <span>메시지 이동 버튼 (▲ ▼)</span>
+            </label>
+            <small class="sttr-hint">
+                위쪽 손잡이를 끌어서 위치를 옮길 수 있어요. ▲▼는 한 번 누르면 메시지 하나씩,
+                길게 누르면 맨 위/맨 아래로 이동합니다.
+            </small>
+            <div class="flex-container">
+                <div id="sttr_dock_reset" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-arrows-to-dot"></i>
+                    <span>위치 초기화</span>
+                </div>
+                <div id="sttr_dock_diag" class="menu_button menu_button_icon">
+                    <i class="fa-solid fa-stethoscope"></i>
+                    <span>안 보일 때 진단</span>
+                </div>
+            </div>
+
+            <h4>번역 저장</h4>
+            <label class="checkbox_label" for="sttr_save_translations">
+                <input type="checkbox" id="sttr_save_translations" />
+                <span>번역 결과 저장 (같은 내용은 다시 요청하지 않음)</span>
+            </label>
+            <small class="sttr-hint">
+                끄면 버튼을 누를 때마다 새로 번역합니다. 이때 "미리 번역해 두기"는 효과가 없어요.
+            </small>
+            <div id="sttr_clear" class="menu_button menu_button_icon">
+                <i class="fa-solid fa-broom"></i>
+                <span>이 채팅의 저장된 번역 지우기</span>
+            </div>
+        </div>
+    </div>
+</div>

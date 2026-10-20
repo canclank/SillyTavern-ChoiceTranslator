@@ -1,0 +1,321 @@
+/*
+ * 성능 메모: 떠 있는 요소(번역 버튼, 팝업, 플로팅 막대)에는 backdrop-filter(블러)를 쓰지 않음.
+ * 스크롤되는 채팅 위에 블러가 있으면 모바일에서 매 프레임 배경을 다시 계산해 버벅임.
+ * 대신 테마 색을 거의 불투명하게 깔아 가독성을 확보.
+ */
+@supports (background-color: rgb(from red r g b / 0.5)) {
+    .sttr-fab,
+    .sttr-popup,
+    .sttr-dock {
+        background-color: rgb(from var(--SmartThemeBlurTintColor) r g b / 0.94);
+    }
+}
+
+/* ---------- 드래그 번역 버튼 ---------- */
+.sttr-fab {
+    position: fixed;
+    z-index: 10050;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background-color: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    font-size: 0.9em;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+}
+
+.sttr-fab:hover {
+    filter: brightness(1.15);
+}
+
+/* 모바일: 입력창 위에 크게 */
+.sttr-fab.sttr-fab-touch {
+    padding: 10px 18px;
+    font-size: 1em;
+}
+
+/* ---------- 번역 결과 팝업 ---------- */
+.sttr-popup {
+    position: fixed;
+    z-index: 10051;
+    display: flex;
+    flex-direction: column;
+    width: max-content;
+    min-width: 200px;
+    max-width: min(460px, calc(100vw - 16px));
+    max-height: 50vh;
+    background-color: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 10px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+}
+
+.sttr-fab[hidden],
+.sttr-popup[hidden] {
+    display: none !important;
+}
+
+.sttr-popup-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+    font-size: 0.8em;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.sttr-popup-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.sttr-collapse-icon {
+    flex-shrink: 0;
+    opacity: 0.6;
+    transition: transform 0.15s ease;
+}
+
+.sttr-popup-title {
+    opacity: 0.75;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 접힌 상태: 헤더만 남김 */
+.sttr-popup.sttr-collapsed .sttr-popup-body {
+    display: none;
+}
+
+.sttr-popup.sttr-collapsed .sttr-popup-head {
+    border-bottom: none;
+}
+
+.sttr-popup.sttr-collapsed .sttr-collapse-icon {
+    transform: rotate(-90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sttr-collapse-icon {
+        transition: none;
+    }
+}
+
+@media (pointer: coarse) {
+    .sttr-popup-actions {
+        gap: 18px;
+        font-size: 1.15em;
+    }
+}
+
+.sttr-popup-actions {
+    display: flex;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.sttr-act {
+    cursor: pointer;
+    opacity: 0.65;
+}
+
+.sttr-act:hover {
+    opacity: 1;
+}
+
+.sttr-popup-body {
+    padding: 8px 12px 10px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.55;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.sttr-popup-body.sttr-loading {
+    opacity: 0.7;
+}
+
+.sttr-popup-body.sttr-error {
+    color: #e57373;
+}
+
+/* 선택지 팝업: 여러 태그가 있을 때 구역 나눔 */
+.sttr-section + .sttr-section {
+    margin-top: 0.8em;
+    padding-top: 0.6em;
+    border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+.sttr-section-label {
+    font-size: 0.75em;
+    opacity: 0.6;
+    margin-bottom: 0.25em;
+}
+
+.sttr-section-text.sttr-error {
+    color: #e57373;
+}
+
+/* 선택지 팝업은 고정형: 테두리로 구분 */
+.sttr-popup.sttr-pinned {
+    border-color: var(--SmartThemeQuoteColor);
+}
+
+/* ---------- 메시지 버튼 ---------- */
+/* 대상 태그가 있는 메시지에만 표시 */
+.mes:not(.sttr-has-target) .sttr_mes_button,
+body.sttr-no-mes-btn .sttr_mes_button {
+    display: none !important;
+}
+
+.sttr_mes_button.sttr-ready {
+    color: var(--SmartThemeQuoteColor);
+}
+
+/* ---------- 플로팅 독 ---------- */
+/* 기본: 채팅 영역(#sheld) 안에 절대 위치. 사이드 패널은 자연스럽게 위를 덮음 */
+.sttr-dock {
+    position: fixed;
+    z-index: 9000;
+    contain: layout paint;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 4px 6px;
+    border-radius: 14px;
+    background-color: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.sttr-dock.sttr-dock-in-sheld {
+    position: absolute;
+    z-index: 100;
+}
+
+.sttr-dock[hidden],
+.sttr-dock-btn[hidden] {
+    display: none !important;
+}
+
+.sttr-dock-grip {
+    width: 100%;
+    padding: 2px 0;
+    text-align: center;
+    font-size: 0.75em;
+    opacity: 0.4;
+    cursor: grab;
+    touch-action: none;
+}
+
+.sttr-dock.sttr-dragging .sttr-dock-grip {
+    cursor: grabbing;
+    opacity: 0.8;
+}
+
+/* 드래그 중에만 별도 레이어로 올려 transform 이동을 GPU에서 처리 */
+.sttr-dock.sttr-dragging {
+    will-change: transform;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.sttr-dock-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: inherit;
+    font-size: 1em;
+    opacity: 0.75;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.sttr-dock-btn:hover,
+.sttr-dock-btn:focus-visible {
+    opacity: 1;
+    background: rgba(127, 127, 127, 0.15);
+}
+
+.sttr-dock-btn:focus-visible {
+    outline: 2px solid var(--SmartThemeQuoteColor);
+    outline-offset: -2px;
+}
+
+.sttr-dock-btn.sttr-ready {
+    color: var(--SmartThemeQuoteColor);
+    opacity: 1;
+}
+
+.sttr-dock-btn.sttr-dim {
+    opacity: 0.3;
+}
+
+/* ---------- 설정 패널 ---------- */
+.sttr-settings h4 {
+    margin: 0.9em 0 0.3em;
+}
+
+.sttr-settings textarea {
+    width: 100%;
+}
+
+.sttr-settings .sttr-hint {
+    display: block;
+    opacity: 0.7;
+    margin: 0.2em 0 0.5em;
+    line-height: 1.4;
+}
+
+.sttr-settings .sttr-conn-row {
+    align-items: center;
+}
+
+.sttr-settings .sttr-conn-row select {
+    flex: 1;
+    margin: 0;
+}
+
+.sttr-settings .sttr-conn-result {
+    display: block;
+    min-height: 1.2em;
+    margin: 0.3em 0 0.4em;
+    font-size: 0.9em;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.sttr-settings .sttr-conn-result.sttr-ok {
+    color: #7ac27a;
+}
+
+.sttr-settings .sttr-conn-result.sttr-fail {
+    color: #e57373;
+}
