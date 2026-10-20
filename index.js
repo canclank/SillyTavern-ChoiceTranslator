@@ -204,7 +204,36 @@ function cleanOutput(out) {
     return t;
 }
 
-async function callModel(systemPrompt, userPrompt) {
+/* ---- 중단 ---- */
+
+function abortError() {
+    const e = new Error('번역을 중단했어요.');
+    e.name = 'AbortError';
+    return e;
+}
+
+function isAbort(e) {
+    return e?.name === 'AbortError';
+}
+
+/**
+ * 요청이 신호를 지원하지 않더라도(예: 메인 API 경로) 중단 즉시 결과를 기다리지 않게 함.
+ * 지원하는 경로(연결 프로필)는 신호를 함께 넘겨 실제 요청도 끊음.
+ */
+function abortable(promise, signal) {
+    if (!signal) return promise;
+    if (signal.aborted) return Promise.reject(abortError());
+    return new Promise((resolve, reject) => {
+        const onAbort = () => reject(abortError());
+        signal.addEventListener('abort', onAbort, { once: true });
+        promise.then(
+            v => { signal.removeEventListener('abort', onAbort); resolve(v); },
+            e => { signal.removeEventListener('abort', onAbort); reject(signal.aborted ? abortError() : e); },
+        );
+    });
+}
+
+async function callModel(systemPrompt, userPrompt, signal = null) {
     const s = settings();
     const maxTokens = Number(s.maxTokens) || 2000;
 
@@ -220,22 +249,24 @@ async function callModel(systemPrompt, userPrompt) {
         if (systemPrompt.trim()) messages.push({ role: 'system', content: systemPrompt });
         messages.push({ role: 'user', content: userPrompt });
 
-        const result = await service.sendRequest(s.profileId, messages, maxTokens, {
+        const result = await abortable(service.sendRequest(s.profileId, messages, maxTokens, {
             stream: false,
+            signal,
             extractData: true,
             includePreset: true,
             includeInstruct: true,
-        });
+        }), signal);
         return typeof result === 'string' ? result : (result?.content ?? '');
     }
 
+    // 메인 API 경로는 요청 자체를 끊을 방법이 없어, 결과만 버림(요청은 뒤에서 끝까지 진행될 수 있음)
     const { generateRaw } = ctx();
-    return await generateRaw({ systemPrompt, prompt: userPrompt, responseLength: maxTokens });
+    return await abortable(generateRaw({ systemPrompt, prompt: userPrompt, responseLength: maxTokens }), signal);
 }
 
 const memCache = new Map();
 
-async function translateText(text, { useCache = true } = {}) {
+async function translateText(text, { useCache = true, signal = null } = {}) {
     const source = String(text ?? '').trim();
     if (!source) throw new Error('번역할 텍스트가 비어 있습니다.');
 
@@ -247,7 +278,7 @@ async function translateText(text, { useCache = true } = {}) {
     const cacheOn = useCache && s.saveTranslations;
     if (cacheOn && memCache.has(key)) return memCache.get(key);
 
-    const out = cleanOutput(await callModel(systemPrompt, userPrompt));
+    const out = cleanOutput(await callModel(systemPrompt, userPrompt, signal));
     if (!out) throw new Error('모델이 빈 응답을 반환했습니다.');
 
     if (s.saveTranslations) {
@@ -385,7 +416,7 @@ function pruneCache(store) {
     for (let i = 0; i < overflow; i++) delete store.cache[keys[i]];
 }
 
-async function runTagTranslation(mesId, force) {
+async function runTagTranslation(mesId, force, signal) {
     const items = extractTargets(mesId);
     if (!items.length) return [];
 
@@ -395,39 +426,68 @@ async function runTagTranslation(mesId, force) {
     let changed = false;
     let lastError = null;
 
+    let aborted = false;
     for (const item of items) {
         const key = cacheKey(item.source);
         let text = force || !store ? null : store.cache[key];
-        if (!text) {
+        if (!text && !aborted) {
             try {
-                text = await translateText(item.source, { useCache: !force });
+                if (signal?.aborted) throw abortError();
+                text = await translateText(item.source, { useCache: !force, signal });
                 if (store) {
                     store.cache[key] = text;
                     changed = true;
                 }
             } catch (e) {
-                lastError = e;
-                console.error(LOG, e);
+                if (isAbort(e)) aborted = true;
+                else {
+                    lastError = e;
+                    console.error(LOG, e);
+                }
             }
         }
         results.push({ label: item.label, text: text ?? null });
     }
 
+    // 중단 전까지 끝난 번역은 저장해 둠
     if (store) pruneCache(store);
     if (changed) saveChatSoon();
+    if (aborted) throw abortError();
     if (lastError && results.every(r => !r.text)) throw lastError;
     return results;
 }
 
+const tagControllers = new Map(); // mesId → AbortController
+
 function translateTags(mesId, { force = false } = {}) {
     if (!force && inflight.has(mesId)) return inflight.get(mesId);
-    const promise = runTagTranslation(mesId, force).finally(() => {
+    tagControllers.get(mesId)?.abort(); // 다시 번역: 이전 요청은 끊음
+
+    const controller = new AbortController();
+    tagControllers.set(mesId, controller);
+    const promise = runTagTranslation(mesId, force, controller.signal).finally(() => {
         if (inflight.get(mesId) === promise) inflight.delete(mesId);
+        if (tagControllers.get(mesId) === controller) tagControllers.delete(mesId);
         updateButton(mesId);
     });
     inflight.set(mesId, promise);
     updateButton(mesId);
     return promise;
+}
+
+function cancelTagTranslation(mesId) {
+    tagControllers.get(mesId)?.abort();
+}
+
+/** 진행 중인 모든 번역 중단. 중단한 개수를 반환 */
+function cancelAllTranslations() {
+    let count = tagControllers.size;
+    for (const c of tagControllers.values()) c.abort();
+    if (selController) {
+        selController.abort();
+        count++;
+    }
+    return count;
 }
 
 /* ------------------------------------------------------------------ */
@@ -513,7 +573,7 @@ function onCharacterMessageRendered(mesId) {
     if (s.autoMode === 'popup') {
         openTagPopup(mesId, autoAnchor(), { silentIfEmpty: true, keepCollapsed: true });
     } else {
-        translateTags(mesId).catch(e => console.warn(LOG, '미리 번역 실패', e));
+        translateTags(mesId).catch(e => { if (!isAbort(e)) console.warn(LOG, '미리 번역 실패', e); });
     }
 }
 
@@ -819,12 +879,14 @@ function setPopupContent(state, content = '') {
     const body = popup.querySelector('.sttr-popup-body');
     body.classList.toggle('sttr-loading', state === 'loading');
     body.classList.toggle('sttr-error', state === 'error');
+    body.classList.toggle('sttr-stopped', state === 'stopped');
     body.replaceChildren();
     popup.dataset.result = '';
 
     if (state === 'loading') {
-        body.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 번역 중…';
-    } else if (state === 'error' || typeof content === 'string') {
+        body.innerHTML = '<span class="sttr-loading-text"><i class="fa-solid fa-spinner fa-spin"></i> 번역 중…</span>'
+            + '<button type="button" class="sttr-act sttr-stop-btn" data-act="stop" title="번역 중단"><i class="fa-solid fa-stop"></i> 중단</button>';
+    } else if (state === 'error' || state === 'stopped' || typeof content === 'string') {
         body.textContent = content;
         if (state === 'ok') popup.dataset.result = content;
     } else {
@@ -886,16 +948,28 @@ function hidePopup() {
     popupToken++;
 }
 
+let selController = null;
+
 async function translateSelection(force) {
     const state = force ? popupState : fabState;
     if (!state?.text) return;
+    selController?.abort();
+    const controller = new AbortController();
+    selController = controller;
+
     const token = openPopupShell({ kind: 'sel', text: state.text, box: state.box }, '번역');
     try {
-        const out = await translateText(state.text, { useCache: !force });
+        const out = await translateText(state.text, { useCache: !force, signal: controller.signal });
         if (token === popupToken) setPopupContent('ok', out);
     } catch (e) {
-        console.error(LOG, e);
-        if (token === popupToken) setPopupContent('error', errMsg(e));
+        if (token !== popupToken) return;
+        if (isAbort(e)) setPopupContent('stopped', '번역을 중단했어요. 다시 번역을 누르면 처음부터 번역해요.');
+        else {
+            console.error(LOG, e);
+            setPopupContent('error', errMsg(e));
+        }
+    } finally {
+        if (selController === controller) selController = null;
     }
 }
 
@@ -911,7 +985,9 @@ async function openTagPopup(mesId, box, { force = false, silentIfEmpty = false, 
         const results = await translateTags(mesId, { force });
         if (token === popupToken) setPopupContent('ok', results);
     } catch (e) {
-        if (token === popupToken) setPopupContent('error', errMsg(e));
+        if (token !== popupToken) return;
+        if (isAbort(e)) setPopupContent('stopped', '번역을 중단했어요. 다시 번역을 누르면 처음부터 번역해요.');
+        else setPopupContent('error', errMsg(e));
     }
 }
 
@@ -923,6 +999,10 @@ async function onPopupAction(e) {
     }
     if (act !== 'close' && popupCollapsed) setPopupCollapsed(false);
     if (act === 'close') hidePopup();
+    if (act === 'stop') {
+        if (popupState?.kind === 'tag') cancelTagTranslation(popupState.mesId);
+        else selController?.abort();
+    }
     if (act === 'retry') {
         if (popupState?.kind === 'tag') openTagPopup(popupState.mesId, popupState.box, { force: true, keepCollapsed: true });
         else if (popupState?.text) translateSelection(true);
@@ -1376,10 +1456,16 @@ function bind(id, key, { type = 'text', after } = {}) {
 let connTesting = false;
 
 /** 선택한 프로필(또는 메인 API)로 아주 짧은 요청을 보내 응답 여부와 속도를 확인 */
+let connController = null;
+
 async function testConnection() {
-    if (connTesting) return;
     const out = document.getElementById('sttr_conn_result');
     const btn = document.getElementById('sttr_conn_test');
+    const label = btn?.querySelector('span');
+    if (connTesting) {
+        connController?.abort();
+        return;
+    }
     const s = settings();
     const profile = getProfiles().find(p => p.id === s.profileId);
     const target = profile
@@ -1387,7 +1473,8 @@ async function testConnection() {
         : '메인 API';
 
     connTesting = true;
-    btn?.classList.add('disabled');
+    connController = new AbortController();
+    if (label) label.textContent = '테스트 중단';
     if (out) {
         out.className = 'sttr-conn-result';
         out.textContent = `${target}에 연결 중…`;
@@ -1395,7 +1482,7 @@ async function testConnection() {
 
     const started = performance.now();
     try {
-        const reply = cleanOutput(await callModel('', 'Reply with exactly one word: OK'));
+        const reply = cleanOutput(await callModel('', 'Reply with exactly one word: OK', connController.signal));
         const sec = ((performance.now() - started) / 1000).toFixed(1);
         if (out) {
             out.classList.add('sttr-ok');
@@ -1405,12 +1492,17 @@ async function testConnection() {
         }
     } catch (e) {
         if (out) {
-            out.classList.add('sttr-fail');
-            out.textContent = `연결 실패: ${errMsg(e)}`;
+            if (isAbort(e)) {
+                out.textContent = '연결 테스트를 중단했어요.';
+            } else {
+                out.classList.add('sttr-fail');
+                out.textContent = `연결 실패: ${errMsg(e)}`;
+            }
         }
     } finally {
         connTesting = false;
-        btn?.classList.remove('disabled');
+        connController = null;
+        if (label) label.textContent = '연결 테스트';
     }
 }
 
@@ -1524,6 +1616,17 @@ function registerSlashCommands() {
     }));
 
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'sttr-stop',
+        callback: async () => {
+            const n = cancelAllTranslations();
+            toastr.info(n ? `진행 중인 번역 ${n}건을 중단했어요.` : '진행 중인 번역이 없어요.');
+            return String(n);
+        },
+        returns: '중단한 번역 개수',
+        helpString: '진행 중인 모든 번역을 중단합니다.',
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'sttr-debug',
         callback: async () => {
             showDiagnostics();
@@ -1621,6 +1724,7 @@ jQuery(async () => {
     on('MORE_MESSAGES_LOADED', later(updateAllButtons));
     on('MESSAGE_SENT', () => { if (popupState?.kind === 'tag') hidePopup(); });
     on('CHAT_CHANGED', () => {
+        cancelAllTranslations();
         hideFab();
         hidePopup();
         navLast = { top: null, time: 0 };
