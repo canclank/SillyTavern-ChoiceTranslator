@@ -195,6 +195,8 @@ body.sttr-no-mes-btn .sttr_mes_button {
     position: fixed;
     z-index: 9000;
     contain: layout paint;
+    will-change: transform;
+    touch-action: none; /* 막대 위에서 손가락이 움직여도 뒤의 채팅이 같이 스크롤되지 않게 */
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -234,11 +236,7 @@ body.sttr-no-mes-btn .sttr_mes_button {
     opacity: 0.8;
 }
 
-/* 드래그 중에만 별도 레이어로 올려 transform 이동을 GPU에서 처리 */
-.sttr-dock.sttr-dragging {
-    will-change: transform;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-}
+
 
 .sttr-dock-btn {
     display: flex;
@@ -318,4 +316,12 @@ body.sttr-no-mes-btn .sttr_mes_button {
 
 .sttr-settings .sttr-conn-result.sttr-fail {
     color: #e57373;
+}
+
+/* 모바일: 손잡이를 손가락으로 잡기 쉽게 키움 */
+@media (pointer: coarse) {
+    .sttr-dock-grip {
+        padding: 7px 0 5px;
+        font-size: 0.85em;
+    }
 }

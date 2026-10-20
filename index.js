@@ -438,6 +438,7 @@ function updateButton(mesId) {
 
 function updateAllButtons() {
     ensureMessageButtons();
+    setTimeout(() => hookChatIframes(), 1500);
     document.querySelectorAll('#chat .mes[mesid]').forEach(el => {
         updateButton(Number(el.getAttribute('mesid')));
     });
@@ -461,6 +462,7 @@ function onMessageButtonClick(e) {
 
 function onCharacterMessageRendered(mesId) {
     if (Number.isNaN(mesId)) return;
+    setTimeout(() => hookChatIframes(getMesEl(mesId)), 1500);
     ensureMessageButtons();
     updateButton(mesId);
 
@@ -531,7 +533,11 @@ function createFloatingUI() {
         e.stopPropagation();
         setTimeout(() => { fabPressed = false; }, 300);
         translateSelection(false);
-        if (isTouchDevice()) window.getSelection()?.removeAllRanges();
+        if (isTouchDevice()) {
+            try {
+                selectionWindow.getSelection()?.removeAllRanges();
+            } catch { /* noop */ }
+        }
     });
     document.body.append(fab);
 
@@ -568,6 +574,12 @@ function createFloatingUI() {
         }
     });
     document.addEventListener('selectionchange', queueSelectionCheck);
+    window.addEventListener('blur', () => {
+        setTimeout(() => {
+            const active = document.activeElement;
+            if (active?.tagName === 'IFRAME' && active.closest('#chat')) hookIframe(active);
+        }, 0);
+    });
     // 모바일은 텍스트를 길게 누르거나 주소창이 접힐 때 scroll/resize가 자주 생김 → 숨기지 않고 다시 계산
     // 모바일은 주소창이 접힐 때마다 resize가 연달아 옴 → 프레임당 한 번만 처리
     let resizeRaf = 0;
@@ -599,29 +611,109 @@ function queueSelectionCheck() {
     selTimer = setTimeout(onSelectionChange, 250);
 }
 
+/**
+ * closest()는 셰도 DOM 경계를 넘지 못함.
+ * 일부 HTML 렌더링 확장은 꾸민 영역을 셰도 DOM에 넣기 때문에, 경계를 넘어 위로 올라가며 찾음.
+ */
+function closestComposed(el, selector) {
+    while (el) {
+        const found = el.closest(selector);
+        if (found) return found;
+        const root = el.getRootNode?.();
+        el = root && root !== document && root.host ? root.host : null;
+    }
+    return null;
+}
+
+/* ---- iframe 안의 선택 ----
+ * 상태창 같은 꾸민 HTML을 iframe으로 그려 주는 확장이 많음.
+ * iframe 안에서 드래그하면 바깥 문서에는 선택 이벤트가 오지 않으므로,
+ * 사용자가 iframe을 건드린 순간에만 그 iframe에 감시를 붙임(평소엔 비용 없음).
+ */
+const hookedFrameDocs = new WeakSet();
+let selectionWindow = window; // 마지막으로 선택이 일어난 창
+
+function hookIframe(iframe) {
+    const attach = () => {
+        let doc;
+        try {
+            doc = iframe.contentDocument; // 다른 출처(sandbox 등)면 접근 불가 → 지원 불가
+        } catch {
+            return;
+        }
+        if (!doc || hookedFrameDocs.has(doc)) return;
+        hookedFrameDocs.add(doc);
+        doc.addEventListener('selectionchange', queueSelectionCheck);
+        doc.addEventListener('pointerdown', () => {
+            if (popupState?.kind === 'sel') hidePopup();
+        }, true);
+    };
+    attach();
+    if (!iframe.dataset.sttrHooked) {
+        iframe.dataset.sttrHooked = '1';
+        iframe.addEventListener('load', attach);
+    }
+}
+
+function hookChatIframes(root = document.getElementById('chat')) {
+    if (!settings().selectionEnabled) return;
+    root?.querySelectorAll('iframe').forEach(hookIframe);
+}
+
+/** 바깥 문서 또는 채팅 안 iframe 중 실제로 글이 선택된 곳을 찾음 */
+function findActiveSelection() {
+    const main = window.getSelection();
+    if (main && !main.isCollapsed && main.rangeCount && main.toString().trim()) {
+        return { sel: main, win: window, frame: null };
+    }
+    for (const frame of document.querySelectorAll('#chat iframe')) {
+        let win;
+        try {
+            win = frame.contentWindow;
+            const sel = win?.getSelection();
+            if (sel && !sel.isCollapsed && sel.rangeCount && sel.toString().trim()) {
+                return { sel, win, frame };
+            }
+        } catch {
+            /* 접근할 수 없는 iframe */
+        }
+    }
+    return null;
+}
+
+function offsetRect(r, frame) {
+    if (!frame) return r;
+    const fr = frame.getBoundingClientRect();
+    const dx = fr.left + frame.clientLeft;
+    const dy = fr.top + frame.clientTop;
+    return { left: r.left + dx, right: r.right + dx, top: r.top + dy, bottom: r.bottom + dy };
+}
+
 function onSelectionChange() {
     const s = settings();
     if (!s.enabled || !s.selectionEnabled) return hideFab();
 
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || !sel.rangeCount) {
+    const found = findActiveSelection();
+    if (!found) {
         if (!fabPressed) hideFab();
         return;
     }
+    const { sel, win, frame } = found;
     const text = sel.toString().trim();
-    if (!text) return hideFab();
 
     const range = sel.getRangeAt(0);
     const node = range.commonAncestorContainer;
-    const elem = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    // iframe 안이면 바깥 문서 기준으로는 iframe 요소 자체로 위치를 판단
+    const elem = frame ?? (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
     if (!elem) return hideFab();
-    if (elem.closest('#sttr_popup, #sttr_fab')) return;
-    if (elem.closest('textarea, input, [contenteditable="true"]')) return hideFab();
-    if (s.selectionOnlyInChat && !elem.closest('#chat')) return hideFab();
+    if (closestComposed(elem, '#sttr_popup, #sttr_fab')) return;
+    if (!frame && closestComposed(elem, 'textarea, input, [contenteditable="true"]')) return hideFab();
+    if (s.selectionOnlyInChat && !closestComposed(elem, '#chat')) return hideFab();
 
+    selectionWindow = win;
     const rects = range.getClientRects();
-    const anchor = rects.length ? rects[rects.length - 1] : range.getBoundingClientRect();
-    showFab(text, anchor, range.getBoundingClientRect());
+    const anchor = offsetRect(rects.length ? rects[rects.length - 1] : range.getBoundingClientRect(), frame);
+    showFab(text, anchor, offsetRect(range.getBoundingClientRect(), frame));
 }
 
 function showFab(text, anchor, box) {
@@ -820,6 +912,13 @@ function createDock() {
         <button type="button" class="sttr-dock-btn" data-dock="down" title="다음 메시지 (길게 누르면 맨 아래)"><i class="fa-solid fa-chevron-down"></i></button>`;
     mountDock();
 
+    // 실리태번 모바일은 화면을 좌우로 쓸면 답변을 넘기는 제스처가 있음(문서 전체에서 터치를 감시).
+    // 막대를 끄는 동작이 그쪽으로 전달되면 제스처 계산이 같이 돌거나 스와이프로 오인될 수 있어 차단.
+    dock.setAttribute('data-swipe-ignore', 'true');
+    for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+        dock.addEventListener(type, e => e.stopPropagation(), { passive: true });
+    }
+
     setupDockDrag(dock.querySelector('.sttr-dock-grip'));
     setupNavButton(dock.querySelector('[data-dock="up"]'), -1);
     setupNavButton(dock.querySelector('[data-dock="down"]'), 1);
@@ -968,6 +1067,7 @@ function setupDockDrag(grip) {
 
     grip.addEventListener('pointerdown', e => {
         e.preventDefault();
+        e.stopPropagation();
         grip.setPointerCapture(e.pointerId);
         const cr = dockContainerRect();
         const r = dock.getBoundingClientRect();
@@ -989,8 +1089,11 @@ function setupDockDrag(grip) {
         dock.classList.add('sttr-dragging');
     });
 
+    grip.setAttribute('data-swipe-ignore', 'true');
+
     grip.addEventListener('pointermove', e => {
         if (!drag) return;
+        e.stopPropagation();
         drag.dx = Math.min(Math.max(e.clientX - drag.x0, drag.minDx), drag.maxDx);
         drag.dy = Math.min(Math.max(e.clientY - drag.y0, drag.minDy), drag.maxDy);
         if (!raf) raf = requestAnimationFrame(paint);
@@ -1036,6 +1139,8 @@ function dockDiagnostics() {
     lines.push(`설정: enabled=${s.enabled}, dockEnabled=${s.dockEnabled}, 번역=${s.dockTranslate}, 이동=${s.dockNav}`);
     lines.push(`저장된 위치: ${JSON.stringify(s.dockPos)}`);
     lines.push(`채팅 메시지 감지: ${hasOpenChat()}`);
+    const dup = countDuplicates();
+    lines.push(`설정 패널 ${dup.panels}개, 플로팅 막대 ${dup.docks}개${dup.panels > 1 || dup.docks > 1 ? ' ← 중복 로드! 예전 폴더를 지워 주세요' : ' (정상)'}`);
     if (!dock) {
         lines.push('독 요소: 생성되지 않음');
         return lines.join('\n');
@@ -1419,7 +1524,32 @@ function registerSlashCommands() {
 /* 초기화                                                               */
 /* ------------------------------------------------------------------ */
 
+/** 같은 확장이 다른 폴더에서 한 번 더 로드됐는지 (예전 버전 폴더가 남아 있는 경우 등) */
+function countDuplicates() {
+    return {
+        panels: document.querySelectorAll('#sttr_settings').length,
+        docks: document.querySelectorAll('.sttr-dock').length,
+        fabs: document.querySelectorAll('#sttr_fab').length,
+    };
+}
+
+function warnDuplicate() {
+    toastr.warning(
+        `선택지 번역기가 두 번 로드되어 있어요. 예전에 직접 넣은 확장 폴더가 남아 있는지 확인하고 지워 주세요. 겹친 플로팅 버튼 때문에 버벅일 수 있어요. (지금 폴더: ${EXT_FOLDER})`,
+        '선택지 번역기',
+        { timeOut: 15000, extendedTimeOut: 5000 },
+    );
+}
+
 jQuery(async () => {
+    // 다른 사본이 이미 화면을 만들어 놓았으면 이 사본은 실행하지 않음
+    if (window.__choiceTranslatorLoaded || document.getElementById('sttr_fab')) {
+        console.warn(LOG, '이미 로드된 사본이 있어 이 사본은 실행하지 않습니다:', EXT_FOLDER, window.__choiceTranslatorLoaded);
+        warnDuplicate();
+        return;
+    }
+    window.__choiceTranslatorLoaded = EXT_FOLDER;
+
     settings();
     try {
         await initSettingsUI();
@@ -1464,4 +1594,10 @@ jQuery(async () => {
     }
 
     console.log(LOG, `로드 완료 (${EXT_FOLDER})`);
+
+    // 이 사본보다 나중에 로드된 예전 버전(중복 방지 장치가 없는)도 잡아냄
+    setTimeout(() => {
+        const d = countDuplicates();
+        if (d.panels > 1 || d.docks > 1 || d.fabs > 1) warnDuplicate();
+    }, 4000);
 });

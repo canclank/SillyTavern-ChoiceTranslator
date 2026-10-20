@@ -6,9 +6,9 @@
     "dependencies": [],
     "js": "index.js",
     "css": "style.css",
-    "author": "canclank",
-    "version": "1.4.2",
-    "homePage": "https://github.com/canclank/SillyTavern-ChoiceTranslator.git",
+    "author": "",
+    "version": "1.4.4",
+    "homePage": "",
     "auto_update": false,
     "minimum_client_version": "1.12.14"
 }
